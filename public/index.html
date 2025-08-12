@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Imposter Dancer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+            color: white;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        h1 {
+            font-size: 3em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+        }
+        #menu, #lobby, #game {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            width: 80%;
+            max-width: 600px;
+            margin-bottom: 20px;
+        }
+        input {
+            padding: 10px;
+            margin: 10px;
+            border: none;
+            border-radius: 5px;
+            width: 200px;
+        }
+        button {
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin: 5px;
+        }
+        button:hover {
+            background: #ff4757;
+        }
+        #avatars {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+        .avatar {
+            width: 120px;
+            height: 120px;
+            background: #ffffff33;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 2px black;
+            margin: 10px;
+            transition: transform 0.3s;
+        }
+        .avatar:hover {
+            transform: scale(1.1);
+        }
+        #voteOptions button {
+            background: #4ecdc4;
+        }
+        #voteOptions button:hover {
+            background: #45b7af;
+        }
+        #imposterStatus {
+            font-size: 1.5em;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            min-height: 50px; /* Ensure consistent height */
+        }
+        .imposter {
+            background: rgba(255, 0, 0, 0.3);
+        }
+        .not-imposter {
+            background: rgba(0, 255, 0, 0.3);
+        }
+        #voteTimer {
+            font-size: 2em;
+            margin: 10px 0;
+            color: #ffd700;
+        }
+        #voteTimer.low {
+            color: #ff0000;
+        }
+        ul {
+            list-style: none;
+            padding: 0;
+        }
+        li {
+            margin: 5px 0;
+            font-size: 1.1em;
+        }
+    </style>
+</head>
+<body>
+<h1>Imposter Dancer</h1>
+<div id="menu">
+    <input id="username" placeholder="Username" />
+    <button onclick="createRoom()">Create Room</button>
+    <br>
+    <input id="roomCode" placeholder="Room Code" />
+    <button onclick="joinRoom()">Join Room</button>
+</div>
+<div id="lobby" style="display:none;">
+    <h2>Room: <span id="roomDisplay"></span></h2>
+
+    <div id="hostControls" style="display:none; margin-bottom: 20px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+        <h4>Host Settings</h4>
+        <label for="danceTime">Dance Time (s):</label>
+        <input type="number" id="danceTime" value="30" style="width: 60px;">
+        <label for="voteTime">Vote Time (s):</label>
+        <input type="number" id="voteTime" value="20" style="width: 60px;">
+        <button onclick="updateSettings()">Save Settings</button>
+    </div>
+
+    <ul id="playerList"></ul>
+    <button id="startButton" style="display:none;" onclick="startGame()">Start Game</button>
+</div>
+<div id="game" style="display:none;">
+    <div id="imposterStatus"></div>
+    <div id="avatars"></div>
+    <div id="votePhase" style="display:none;">
+        <h2>Vote for the Imposter</h2>
+        <div id="voteTimer"></div>
+        <div id="voteOptions"></div>
+    </div>
+    <div id="reveal"></div>
+</div>
+<audio id="songAudio"></audio>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    const socket = io();
+    let roomCode, isHost = false;
+    let players = [];
+    let audio = document.getElementById('songAudio');
+    let lastDance = 0;
+    let voteTimerInterval;
+
+
+    function createRoom() {
+        const username = document.getElementById('username').value;
+        if (!username) return alert('Enter username');
+        saveUsername(username); // <-- Add this line
+        socket.emit('createRoom', username);
+    }
+
+    function joinRoom() {
+        const username = document.getElementById('username').value;
+        const code = document.getElementById('roomCode').value;
+        if (!username || !code) return alert('Enter username and room code');
+        saveUsername(username); // <-- Add this line
+        socket.emit('joinRoom', { roomCode: code, username });
+    }
+
+    function startGame() {
+        socket.emit('startGame');
+    }
+
+
+    function updateSettings() {
+        const danceTime = document.getElementById('danceTime').value;
+        const voteTime = document.getElementById('voteTime').value;
+        socket.emit('updateSettings', { danceTime, voteTime });
+        alert('Settings updated!');
+    }
+
+    function kickPlayer(playerId) {
+        if (confirm('Are you sure you want to kick this player?')) {
+            socket.emit('kickPlayer', playerId);
+        }
+    }
+
+    socket.on('roomCreated', ({ roomCode: code, isHost: host }) => {
+        roomCode = code;
+        isHost = host;
+        showLobby();
+    });
+
+    socket.on('roomJoined', ({ roomCode: code, isHost: host }) => {
+        roomCode = code;
+        isHost = host;
+        showLobby();
+    });
+
+    socket.on('error', (msg) => alert(msg));
+
+    socket.on('playerList', ({ players: p, hostId, gameInProgress }) => {
+        players = p;
+        const amIHost = socket.id === hostId;
+
+        // Show host controls and kick buttons if host
+        document.getElementById('hostControls').style.display = amIHost ? 'block' : 'none';
+
+        document.getElementById('playerList').innerHTML = p.map(player => {
+            const isDisconnected = player.disconnected ? 'style="color: #aaa; text-decoration: line-through;"' : '';
+            const disconnectText = player.disconnected ? ' - disconnected' : '';
+            const hostText = player.id === hostId ? ' (Host)' : '';
+
+            const kickButton = amIHost && player.id !== socket.id
+                ? `<button onclick="kickPlayer('${player.id}')" style="background: #c0392b; margin-left: 10px; padding: 2px 8px;">Kick</button>`
+                : '';
+
+            return `<li ${isDisconnected}>
+            ${player.username} (Score: ${player.score}) ${hostText} ${disconnectText} ${kickButton}
+        </li>`;
+        }).join('');
+
+        document.getElementById('startButton').style.display = amIHost && !gameInProgress && p.length >= 2 ? 'block' : 'none';
+    });
+
+    socket.on('kicked', () => {
+        alert("You have been kicked from the room by the host.");
+        window.location.reload(); // Reload the page to go back to the menu
+    });
+
+    socket.on('playerJoined', (username) => {
+        console.log(`${username} joined`);
+    });
+
+    socket.on('gameStart', ({ songUrl, startTime, players: pl, isImposter }) => {
+        players = pl;
+        document.getElementById('lobby').style.display = 'none';
+        document.getElementById('game').style.display = 'block';
+        setupAvatars();
+        const status = document.getElementById('imposterStatus');
+        status.textContent = isImposter ? 'You are the Imposter!' : 'Find the Imposter!';
+        status.className = isImposter ? 'imposter' : 'not-imposter';
+        setTimeout(() => {
+            status.textContent = '';
+            status.className = ''; // Clear both text and background
+        }, 5000); // Hide text and background after 5s
+        audio.src = songUrl;
+        audio.load();
+        audio.addEventListener('loadedmetadata', () => {
+            const interval = setInterval(() => {
+                const now = Date.now();
+                if (now >= startTime) {
+                    const seek = (now - startTime) / 1000;
+                    audio.currentTime = seek % audio.duration;
+                    audio.play();
+                    clearInterval(interval);
+                }
+            }, 100);
+        });
+        document.addEventListener('keydown', handleKey);
+    });
+
+    socket.on('playerDance', (playerId) => {
+        const avatar = document.getElementById(`avatar-${playerId}`);
+        if (avatar) {
+            avatar.classList.add('animate__animated', 'animate__bounce');
+            setTimeout(() => avatar.classList.remove('animate__animated', 'animate__bounce'), 1000);
+        }
+    });
+
+    socket.on('votePhase', ({ players: votePlayers }) => {
+        document.removeEventListener('keydown', handleKey);
+        document.getElementById('votePhase').style.display = 'block';
+        const options = document.getElementById('voteOptions');
+        options.innerHTML = votePlayers.map(p => `<button onclick="vote('${p.id}')">${p.username} (Score: ${p.score})</button>`).join('');
+        startVoteTimer(20); // 20 seconds
+    });
+
+    socket.on('reveal', ({ imposterId, scores }) => {
+        clearInterval(voteTimerInterval);
+        document.getElementById('votePhase').style.display = 'none';
+        document.getElementById('reveal').innerHTML = `<h2>Imposter was ${players.find(p => p.id === imposterId).username}</h2>
+        <ul>${scores.map(s => `<li>${s.username}: ${s.score}</li>`).join('')}</ul>`;
+        setTimeout(() => {
+            document.getElementById('game').style.display = 'none';
+            document.getElementById('lobby').style.display = 'block';
+            document.getElementById('reveal').innerHTML = '';
+            document.getElementById('imposterStatus').textContent = '';
+            document.getElementById('imposterStatus').className = '';
+            audio.pause();
+        }, 5000);
+    });
+
+    function showLobby() {
+        document.getElementById('menu').style.display = 'none';
+        document.getElementById('lobby').style.display = 'block';
+        document.getElementById('roomDisplay').innerText = roomCode;
+    }
+
+    function setupAvatars() {
+        const avatarsDiv = document.getElementById('avatars');
+        avatarsDiv.innerHTML = players.map(p => `<div id="avatar-${p.id}" class="avatar">${p.username}</div>`).join('');
+    }
+
+    function handleKey(e) {
+        if (e.key === ' ' && Date.now() - lastDance > 200) { // Debounce 200ms
+            lastDance = Date.now();
+            socket.emit('danceMove');
+        }
+    }
+
+    function vote(votedId) {
+        socket.emit('vote', votedId);
+        document.getElementById('voteOptions').innerHTML = 'Voted!';
+    }
+
+    function startVoteTimer(seconds) {
+        let timeLeft = seconds;
+        const timerEl = document.getElementById('voteTimer');
+        timerEl.textContent = `Time left: ${timeLeft}s`;
+        voteTimerInterval = setInterval(() => {
+            timeLeft--;
+            timerEl.textContent = `Time left: ${timeLeft}s`;
+            if (timeLeft <= 5) {
+                timerEl.classList.add('low');
+            }
+            if (timeLeft <= 0) {
+                clearInterval(voteTimerInterval);
+            }
+        }, 1000);
+    }
+
+    window.addEventListener('load', () => {
+        const savedUsername = localStorage.getItem('imposterDancerUsername');
+        if (savedUsername) {
+            document.getElementById('username').value = savedUsername;
+        }
+    });
+
+    function saveUsername(username) {
+        localStorage.setItem('imposterDancerUsername', username);
+    }
+</script>
+</body>
+</html>
