@@ -39,9 +39,8 @@ io.on('connection', (socket) => {
             players: [{ id: socket.id, username, score: 0 }],
             hostId: socket.id,
             gameInProgress: false,
-            scores: {},
-            danceTime: 30000, // 30s
-            voteTime: 20000 // 20s
+            danceTime: 30000, // Default 30s
+            voteTime: 20000 // Default 20s
         };
         socket.join(roomCode);
         socket.room = roomCode;
@@ -56,21 +55,18 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // --- RECONNECTION LOGIC ---
         const reconnectingPlayer = rooms[roomCode].players.find(
             p => p.username === username && p.disconnected
         );
 
         if (reconnectingPlayer) {
             console.log(`${username} is reconnecting.`);
-            clearTimeout(reconnectingPlayer.disconnectTimeout); // Cancel the removal timeout
-            reconnectingPlayer.id = socket.id; // Assign the new socket ID
+            clearTimeout(reconnectingPlayer.disconnectTimeout);
+            reconnectingPlayer.id = socket.id;
             reconnectingPlayer.disconnected = false;
         } else {
-            // --- NEW PLAYER LOGIC (as before) ---
             rooms[roomCode].players.push({ id: socket.id, username, score: 0 });
         }
-        // --- END OF NEW LOGIC ---
 
         socket.join(roomCode);
         socket.room = roomCode;
@@ -81,62 +77,57 @@ io.on('connection', (socket) => {
     });
 
     socket.on('startGame', () => {
-        const room = socket.room;
-        if (!room || socket.id !== rooms[room].hostId || rooms[room].gameInProgress || rooms[room].players.length < 2) {
+        const roomCode = socket.room;
+        const room = rooms[roomCode];
+        if (!room || socket.id !== room.hostId || room.gameInProgress || room.players.length < 2) {
             return;
         }
-        rooms[room].gameInProgress = true;
-        rooms[room].imposterIndex = Math.floor(Math.random() * rooms[room].players.length);
-        rooms[room].imposterId = rooms[room].players[rooms[room].imposterIndex].id;
-        rooms[room].votes = {};
+        room.gameInProgress = true;
+        room.imposterIndex = Math.floor(Math.random() * room.players.length);
+        room.imposterId = room.players[room.imposterIndex].id;
+        room.votes = {};
 
-        // Choose songs
         const normalSongIndex = Math.floor(Math.random() * normalSongs.length);
         const imposterSongIndex = Math.floor(Math.random() * imposterSongs.length);
-        rooms[room].normalSong = normalSongs[normalSongIndex];
-        rooms[room].imposterSong = imposterSongs[imposterSongIndex];
+        room.normalSong = normalSongs[normalSongIndex];
+        room.imposterSong = imposterSongs[imposterSongIndex];
 
-        const startTime = Date.now() + 5000;
-        rooms[room].startTime = startTime;
+        const startTime = Date.now() + 5000; // 5s delay for countdown
+        room.startTime = startTime;
 
-        // Send to each player their song and imposter status
-        rooms[room].players.forEach((player) => {
-            const isImposter = player.id === rooms[room].imposterId;
+        room.players.forEach((player) => {
+            const isImposter = player.id === room.imposterId;
             io.to(player.id).emit('gameStart', {
-                songUrl: isImposter ? rooms[room].imposterSong : rooms[room].normalSong,
+                songUrl: isImposter ? room.imposterSong : room.normalSong,
                 startTime,
-                players: rooms[room].players.map(p => ({ id: p.id, username: p.username, score: p.score })),
+                players: room.players.map(p => ({ id: p.id, username: p.username, score: p.score })),
                 isImposter,
-                startOffset: 10
+                startOffset: 10 // Start song at 10 seconds
             });
         });
 
-        // End dancing phase after danceTime
-        setTimeout(() => startVotePhase(room), rooms[room].danceTime);
+        setTimeout(() => startVotePhase(roomCode), room.danceTime + 5000); // Add countdown time to dance phase
     });
 
     socket.on('danceMove', () => {
-        const room = socket.room;
-        if (room && rooms[room].gameInProgress) {
-            io.to(room).emit('playerDance', socket.id);
+        const roomCode = socket.room;
+        if (roomCode && rooms[roomCode] && rooms[roomCode].gameInProgress) {
+            io.to(roomCode).emit('playerDance', socket.id);
         }
     });
 
     socket.on('vote', (votedId) => {
-        const room = socket.room;
-        if (room && rooms[room].gameInProgress && !rooms[room].votes[socket.id] && socket.id !== votedId) {
-            rooms[room].votes[socket.id] = votedId;
+        const roomCode = socket.room;
+        if (roomCode && rooms[roomCode] && rooms[roomCode].gameInProgress && !rooms[roomCode].votes[socket.id] && socket.id !== votedId) {
+            rooms[roomCode].votes[socket.id] = votedId;
         }
     });
 
     socket.on('updateSettings', ({ danceTime, voteTime }) => {
         const roomCode = socket.room;
         if (!roomCode || !rooms[roomCode] || socket.id !== rooms[roomCode].hostId) return;
-
-        // Update server-side values (convert to milliseconds for setTimeout)
         rooms[roomCode].danceTime = parseInt(danceTime, 10) * 1000;
         rooms[roomCode].voteTime = parseInt(voteTime, 10) * 1000;
-
         console.log(`Room ${roomCode} settings updated by host.`);
     });
 
@@ -144,16 +135,12 @@ io.on('connection', (socket) => {
         const roomCode = socket.room;
         if (!roomCode || !rooms[roomCode] || socket.id !== rooms[roomCode].hostId) return;
 
-        // Find the socket of the player to be kicked
         const kickedSocket = io.sockets.sockets.get(playerIdToKick);
         if (kickedSocket) {
             kickedSocket.emit('kicked');
             kickedSocket.leave(roomCode);
         }
-
-        // Remove player from the room's player list
         rooms[roomCode].players = rooms[roomCode].players.filter(p => p.id !== playerIdToKick);
-
         console.log(`Player ${playerIdToKick} kicked from room ${roomCode}.`);
         updatePlayerList(roomCode);
     });
@@ -167,69 +154,71 @@ io.on('connection', (socket) => {
 
         console.log(`${player.username} disconnected.`);
         player.disconnected = true;
-        player.disconnectTimeout = setTimeout(() => {
-            // This code runs if the player does NOT reconnect in time (e.g., 60 seconds)
-            console.log(`${player.username} timed out and was removed.`);
-            rooms[roomCode].players = rooms[roomCode].players.filter(p => p.id !== socket.id);
 
-            // If the room is now empty, delete it
+        player.disconnectTimeout = setTimeout(() => {
+            console.log(`${player.username} timed out and was removed from ${roomCode}.`);
+            rooms[roomCode].players = rooms[roomCode].players.filter(p => p.id !== player.id);
+
             if (rooms[roomCode].players.length === 0) {
                 console.log(`Room ${roomCode} is empty, deleting.`);
                 delete rooms[roomCode];
                 return;
             }
 
-            // If the disconnected player was the host, assign a new one
             if (player.id === rooms[roomCode].hostId) {
                 rooms[roomCode].hostId = rooms[roomCode].players[0].id;
                 console.log(`Host migrated to ${rooms[roomCode].players[0].username} in room ${roomCode}.`);
             }
-
             updatePlayerList(roomCode);
-
         }, 60000); // 60-second timeout
 
-        updatePlayerList(roomCode); // Update list to show player as disconnected
+        updatePlayerList(roomCode);
     });
 });
 
-function updatePlayerList(room) {
-    io.to(room).emit('playerList', {
-        players: rooms[room].players,
-        hostId: rooms[room].hostId,
-        gameInProgress: rooms[room].gameInProgress
+function updatePlayerList(roomCode) {
+    if (!rooms[roomCode]) return;
+    io.to(roomCode).emit('playerList', {
+        players: rooms[roomCode].players,
+        hostId: rooms[roomCode].hostId,
+        gameInProgress: rooms[roomCode].gameInProgress
     });
 }
 
-function startVotePhase(room) {
-    rooms[room].players.forEach((player) => {
+function startVotePhase(roomCode) {
+    if (!rooms[roomCode]) return;
+    const room = rooms[roomCode];
+    room.players.forEach((player) => {
         io.to(player.id).emit('votePhase', {
-            players: rooms[room].players.filter(p => p.id !== player.id).map(p => ({ id: p.id, username: p.username, score: p.score }))
+            players: room.players.filter(p => p.id !== player.id).map(p => ({ id: p.id, username: p.username, score: p.score }))
         });
     });
-    setTimeout(() => endGame(room), rooms[room].voteTime);
+    setTimeout(() => endGame(roomCode), room.voteTime);
 }
 
-function endGame(room) {
-    const imposterId = rooms[room].imposterId;
-    Object.keys(rooms[room].votes).forEach((voterId) => {
-        if (voterId === imposterId) return; // Imposter's vote doesn't count for scoring
-        const votedId = rooms[room].votes[voterId];
-        const voter = rooms[room].players.find(p => p.id === voterId);
-        const imposter = rooms[room].players.find(p => p.id === imposterId);
+function endGame(roomCode) {
+    if (!rooms[roomCode]) return;
+    const room = rooms[roomCode];
+    const imposterId = room.imposterId;
+    const imposter = room.players.find(p => p.id === imposterId);
+
+    Object.keys(room.votes).forEach((voterId) => {
+        if (voterId === imposterId) return;
+        const votedId = room.votes[voterId];
+        const voter = room.players.find(p => p.id === voterId);
         if (votedId === imposterId) {
-            voter.score += 1;
+            voter.score++;
         } else {
-            imposter.score += 1;
+            imposter.score++;
         }
     });
 
-    io.to(room).emit('reveal', {
+    io.to(roomCode).emit('reveal', {
         imposterId,
-        scores: rooms[room].players.map(p => ({ username: p.username, score: p.score }))
+        scores: room.players.map(p => ({ username: p.username, score: p.score }))
     });
-    rooms[room].gameInProgress = false;
-    updatePlayerList(room);
+    room.gameInProgress = false;
+    updatePlayerList(roomCode);
 }
 
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));

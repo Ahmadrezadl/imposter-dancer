@@ -32,6 +32,7 @@
             width: 80%;
             max-width: 600px;
             margin-bottom: 20px;
+            position: relative; /* Needed for countdown positioning */
         }
         input {
             padding: 10px;
@@ -88,7 +89,7 @@
             margin: 10px 0;
             padding: 10px;
             border-radius: 5px;
-            min-height: 50px; /* Ensure consistent height */
+            min-height: 50px;
         }
         .imposter {
             background: rgba(255, 0, 0, 0.3);
@@ -103,6 +104,17 @@
         }
         #voteTimer.low {
             color: #ff0000;
+        }
+        #countdown {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 10em;
+            font-weight: bold;
+            color: #ffd700;
+            text-shadow: 3px 3px 6px rgba(0,0,0,0.5);
+            display: none;
         }
         ul {
             list-style: none;
@@ -123,9 +135,9 @@
     <input id="roomCode" placeholder="Room Code" />
     <button onclick="joinRoom()">Join Room</button>
 </div>
+
 <div id="lobby" style="display:none;">
     <h2>Room: <span id="roomDisplay"></span></h2>
-
     <div id="hostControls" style="display:none; margin-bottom: 20px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
         <h4>Host Settings</h4>
         <label for="danceTime">Dance Time (s):</label>
@@ -134,10 +146,10 @@
         <input type="number" id="voteTime" value="20" style="width: 60px;">
         <button onclick="updateSettings()">Save Settings</button>
     </div>
-
     <ul id="playerList"></ul>
     <button id="startButton" style="display:none;" onclick="startGame()">Start Game</button>
 </div>
+
 <div id="game" style="display:none;">
     <div id="imposterStatus"></div>
     <div id="avatars"></div>
@@ -147,8 +159,11 @@
         <div id="voteOptions"></div>
     </div>
     <div id="reveal"></div>
+    <div id="countdown"></div>
 </div>
+
 <audio id="songAudio"></audio>
+<audio id="beepAudio" src="/music/beep.mp3" preload="auto"></audio>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
@@ -159,11 +174,10 @@
     let lastDance = 0;
     let voteTimerInterval;
 
-
     function createRoom() {
         const username = document.getElementById('username').value;
         if (!username) return alert('Enter username');
-        saveUsername(username); // <-- Add this line
+        saveUsername(username);
         socket.emit('createRoom', username);
     }
 
@@ -171,14 +185,13 @@
         const username = document.getElementById('username').value;
         const code = document.getElementById('roomCode').value;
         if (!username || !code) return alert('Enter username and room code');
-        saveUsername(username); // <-- Add this line
+        saveUsername(username);
         socket.emit('joinRoom', { roomCode: code, username });
     }
 
     function startGame() {
         socket.emit('startGame');
     }
-
 
     function updateSettings() {
         const danceTime = document.getElementById('danceTime').value;
@@ -209,49 +222,66 @@
 
     socket.on('playerList', ({ players: p, hostId, gameInProgress }) => {
         players = p;
-        const amIHost = socket.id === hostId;
+        isHost = socket.id === hostId;
 
-        // Show host controls and kick buttons if host
-        document.getElementById('hostControls').style.display = amIHost ? 'block' : 'none';
+        document.getElementById('hostControls').style.display = isHost ? 'block' : 'none';
 
         document.getElementById('playerList').innerHTML = p.map(player => {
-            const isDisconnected = player.disconnected ? 'style="color: #aaa; text-decoration: line-through;"' : '';
-            const disconnectText = player.disconnected ? ' - disconnected' : '';
-            const hostText = player.id === hostId ? ' (Host)' : '';
-
-            const kickButton = amIHost && player.id !== socket.id
+            const disconnectedStyle = player.disconnected ? 'style="color: #aaa; text-decoration: line-through;"' : '';
+            const statusText = player.disconnected ? ' - disconnected' : (player.id === hostId ? ' (Host)' : '');
+            const kickButton = isHost && player.id !== socket.id
                 ? `<button onclick="kickPlayer('${player.id}')" style="background: #c0392b; margin-left: 10px; padding: 2px 8px;">Kick</button>`
                 : '';
 
-            return `<li ${isDisconnected}>
-            ${player.username} (Score: ${player.score}) ${hostText} ${disconnectText} ${kickButton}
-        </li>`;
+            return `<li ${disconnectedStyle}>${player.username} (Score: ${player.score}) ${statusText} ${kickButton}</li>`;
         }).join('');
 
-        document.getElementById('startButton').style.display = amIHost && !gameInProgress && p.length >= 2 ? 'block' : 'none';
+        document.getElementById('startButton').style.display = isHost && !gameInProgress && p.length >= 2 ? 'block' : 'none';
     });
 
     socket.on('kicked', () => {
         alert("You have been kicked from the room by the host.");
-        window.location.reload(); // Reload the page to go back to the menu
+        window.location.reload();
     });
 
-    socket.on('playerJoined', (username) => {
-        console.log(`${username} joined`);
-    });
+    function startCountdown(duration) {
+        const countdownEl = document.getElementById('countdown');
+        const beepAudio = document.getElementById('beepAudio');
+        countdownEl.style.display = 'block';
+        let timer = duration;
+        countdownEl.textContent = timer;
+        const interval = setInterval(() => {
+            timer--;
+            if (timer > 0) {
+                countdownEl.textContent = timer;
+                beepAudio.play().catch(e => console.error("Beep sound error:", e));
+            } else if (timer === 0) {
+                countdownEl.textContent = 'DANCE!';
+                beepAudio.play().catch(e => console.error("Beep sound error:", e));
+            } else {
+                clearInterval(interval);
+                countdownEl.style.display = 'none';
+            }
+        }, 1000);
+    }
 
-    socket.on('gameStart', ({ songUrl, startTime, players: pl, isImposter }) => {
+    socket.on('gameStart', ({ songUrl, startTime, players: pl, isImposter, startOffset }) => {
         players = pl;
         document.getElementById('lobby').style.display = 'none';
         document.getElementById('game').style.display = 'block';
+        document.getElementById('countdown').style.display = 'none';
         setupAvatars();
         const status = document.getElementById('imposterStatus');
         status.textContent = isImposter ? 'You are the Imposter!' : 'Find the Imposter!';
         status.className = isImposter ? 'imposter' : 'not-imposter';
+
+        startCountdown(5);
+
         setTimeout(() => {
             status.textContent = '';
-            status.className = ''; // Clear both text and background
-        }, 5000); // Hide text and background after 5s
+            status.className = '';
+        }, 5000);
+
         audio.src = songUrl;
         audio.load();
         audio.addEventListener('loadedmetadata', () => {
@@ -259,7 +289,7 @@
                 const now = Date.now();
                 if (now >= startTime) {
                     const seek = (now - startTime) / 1000;
-                    audio.currentTime = seek % audio.duration;
+                    audio.currentTime = startOffset + (seek % audio.duration);
                     audio.play();
                     clearInterval(interval);
                 }
@@ -281,14 +311,16 @@
         document.getElementById('votePhase').style.display = 'block';
         const options = document.getElementById('voteOptions');
         options.innerHTML = votePlayers.map(p => `<button onclick="vote('${p.id}')">${p.username} (Score: ${p.score})</button>`).join('');
-        startVoteTimer(20); // 20 seconds
+        startVoteTimer(20);
     });
 
     socket.on('reveal', ({ imposterId, scores }) => {
         clearInterval(voteTimerInterval);
         document.getElementById('votePhase').style.display = 'none';
-        document.getElementById('reveal').innerHTML = `<h2>Imposter was ${players.find(p => p.id === imposterId).username}</h2>
+        const imposter = players.find(p => p.id === imposterId);
+        document.getElementById('reveal').innerHTML = `<h2>Imposter was ${imposter ? imposter.username : 'someone who left'}</h2>
         <ul>${scores.map(s => `<li>${s.username}: ${s.score}</li>`).join('')}</ul>`;
+
         setTimeout(() => {
             document.getElementById('game').style.display = 'none';
             document.getElementById('lobby').style.display = 'block';
@@ -296,6 +328,7 @@
             document.getElementById('imposterStatus').textContent = '';
             document.getElementById('imposterStatus').className = '';
             audio.pause();
+            audio.currentTime = 0;
         }, 5000);
     });
 
@@ -311,7 +344,7 @@
     }
 
     function handleKey(e) {
-        if (e.key === ' ' && Date.now() - lastDance > 200) { // Debounce 200ms
+        if (e.key === ' ' && Date.now() - lastDance > 200) {
             lastDance = Date.now();
             socket.emit('danceMove');
         }
@@ -319,13 +352,14 @@
 
     function vote(votedId) {
         socket.emit('vote', votedId);
-        document.getElementById('voteOptions').innerHTML = 'Voted!';
+        document.getElementById('voteOptions').innerHTML = '<h2>Voted!</h2>';
     }
 
     function startVoteTimer(seconds) {
         let timeLeft = seconds;
         const timerEl = document.getElementById('voteTimer');
         timerEl.textContent = `Time left: ${timeLeft}s`;
+        timerEl.classList.remove('low');
         voteTimerInterval = setInterval(() => {
             timeLeft--;
             timerEl.textContent = `Time left: ${timeLeft}s`;
@@ -334,8 +368,13 @@
             }
             if (timeLeft <= 0) {
                 clearInterval(voteTimerInterval);
+                document.getElementById('voteOptions').innerHTML = '<h2>Time is up!</h2>';
             }
         }, 1000);
+    }
+
+    function saveUsername(username) {
+        localStorage.setItem('imposterDancerUsername', username);
     }
 
     window.addEventListener('load', () => {
@@ -344,10 +383,6 @@
             document.getElementById('username').value = savedUsername;
         }
     });
-
-    function saveUsername(username) {
-        localStorage.setItem('imposterDancerUsername', username);
-    }
 </script>
 </body>
 </html>
